@@ -1,6 +1,6 @@
 -- Runs every tests/specs/*_spec.lua in this nvim:
 --   nvim -l tests/run.lua [spec files...]
--- Prints one line per test and a final "passed=N failed=N skipped=N" line;
+-- Prints one line per test and a final "RESULT passed=N failed=N skipped=N" line;
 -- exits non-zero on any failure. A spec may carry a header line
 --   -- xyno-os: linux (why)
 -- and is skipped whole on other platforms.
@@ -59,5 +59,5 @@ for _, spec in ipairs(specs) do
   end
 end
 require("xynotest.helpers").cleanup()
-print(("passed=%d failed=%d skipped=%d"):format(total.passed, total.failed, total.skipped))
+print(("RESULT passed=%d failed=%d skipped=%d"):format(total.passed, total.failed, total.skipped))
 os.exit(total.failed > 0 and 1 or 0)
