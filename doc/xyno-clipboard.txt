@@ -1,0 +1,88 @@
+*xyno-clipboard.txt*  Clipboard provider for sessions that reach another machine
+
+==============================================================================
+CONTENTS                                                *xyno-clipboard-contents*
+
+  1. Introduction ........................................ |xyno-clipboard|
+  2. Requirements ........................................ |xyno-clipboard-requirements|
+  3. Setup and options ................................... |xyno-clipboard-setup|
+  4. Commands ............................................ |xyno-clipboard-commands|
+  5. Lua API ............................................. |xyno-clipboard-api|
+  6. Keys ................................................ |xyno-clipboard-keys|
+  7. How it works ........................................ |xyno-clipboard-how|
+  8. Platforms ........................................... |xyno-clipboard-platforms|
+
+==============================================================================
+1. Introduction                                                  *xyno-clipboard*
+
+xyno-clipboard installs a |g:clipboard| provider when Neovim runs inside tmux,
+an SSH session or a herdr pane: every copy is emitted as OSC 52, so the yank
+reaches the machine you sit at. Outside such a session it does nothing and the
+default provider detection stays untouched.
+
+==============================================================================
+2. Requirements                                         *xyno-clipboard-requirements*
+
+  - Neovim 0.12 or newer (uses `vim.ui.clipboard.osc52`).
+  - Linux. On other systems setup() returns without installing anything.
+  - Optional: `wl-copy` and `wl-paste` plus a `WAYLAND_DISPLAY`, so that
+    content copied in other applications stays pasteable.
+
+==============================================================================
+3. Setup and options                                         *xyno-clipboard-setup*
+
+>lua
+    require("xyno_clipboard").setup({
+      commands = true, -- register :XynoClipboardStatus
+      osc52 = true,    -- emit OSC 52 on copy
+    })
+<
+                                                          *g:xyno_clipboard_osc52*
+Setting `vim.g.xyno_clipboard_osc52 = false` at any time stops the OSC 52
+emit of the installed provider (the local Wayland copy still happens). The
+variable is checked on every copy.
+
+No global keymaps are set. The plugin has no dependencies on other plugins.
+
+==============================================================================
+4. Commands                                               *xyno-clipboard-commands*
+
+                                                          *:XynoClipboardStatus*
+:XynoClipboardStatus    Notify whether the provider is active and why (which
+                        of TMUX, SSH_TTY, SSH_CONNECTION, HERDR_PANE_ID or a
+                        herdr ancestor process), or why it is inactive.
+
+==============================================================================
+5. Lua API                                                    *xyno-clipboard-api*
+
+require("xyno_clipboard").setup({opts})                 *xyno_clipboard.setup()*
+    Detect the session and install |g:clipboard| when it is remote-capable.
+
+require("xyno_clipboard").status()                      *xyno_clipboard.status()*
+    Returns a table `{ active = bool, reason = string|nil, skipped = string|nil }`.
+
+==============================================================================
+6. Keys                                                      *xyno-clipboard-keys*
+
+The plugin defines no keymaps and has none to suggest: it works through the
+normal `"+` and `"*` registers, for example with `clipboard=unnamedplus`.
+
+==============================================================================
+7. How it works                                              *xyno-clipboard-how*
+
+The session counts as remote-capable when `$TMUX`, `$SSH_TTY`,
+`$SSH_CONNECTION` or `$HERDR_PANE_ID` is set, or when one of the up to 16
+nearest ancestor processes has a name containing "herdr" (read from /proc,
+only when no variable decided). Copy: optionally `wl-copy --sensitive --type
+text/plain` (with `--primary` for the `*` register), then the OSC 52 emit.
+Paste: `wl-paste --no-newline` when Wayland and both tools are present,
+otherwise an OSC 52 query. The provider is installed with `cache_enabled = 0`
+under the name `XynoClipboard`.
+
+==============================================================================
+8. Platforms                                              *xyno-clipboard-platforms*
+
+Linux: covered by the specs in this repository. Windows and macOS: setup()
+returns early by design; nothing is installed and nothing is tested there.
+
+ vim:tw=78:ts=8:ft=help:norl:
