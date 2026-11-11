@@ -9,7 +9,7 @@ local function write(path, s)
 end
 
 describe("xyno_clipboard", function()
-  local ENV = { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "PATH", "XYNO_FAKE_RC" }
+  local ENV = { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "DISPLAY", "PATH", "XYNO_FAKE_RC" }
   local saved
   local real_osc52
 
@@ -46,13 +46,31 @@ describe("xyno_clipboard", function()
     end
   end
 
-  --- Run setup() with the given env and return vim.g.clipboard.
+  --- Make a native provider (a fake xclip on an X11 display) available, as on a normal desktop.
+  local function with_native_tool()
+    local dir = H.tmpdir()
+    write(dir .. "/xclip", "#!/bin/sh\ncat >/dev/null\n")
+    vim.fn.system({ "chmod", "+x", dir .. "/xclip" })
+    vim.env.PATH = dir .. ":" .. saved.PATH
+    vim.env.DISPLAY = ":0"
+  end
+
+  --- Run setup() with the given env and return vim.g.clipboard. Without a session
+  --- variable in env a native tool is assumed unless opts.no_native is set.
   local function setup(env, opts)
     for _, k in ipairs({ "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID" }) do
       vim.env[k] = nil
     end
     for k, v in pairs(env or {}) do
       vim.env[k] = v
+    end
+    local no_native = opts and opts.no_native
+    opts = opts and vim.tbl_extend("force", opts, { no_native = vim.NIL }) or nil
+    if opts then
+      opts.no_native = nil
+    end
+    if next(env or {}) == nil and not no_native then
+      with_native_tool()
     end
     vim.g.clipboard = nil
     require("xyno_clipboard").setup(opts)
@@ -114,6 +132,89 @@ describe("xyno_clipboard", function()
     vim.fn.system({ "chmod", "+x", dir .. "/wl-copy", dir .. "/wl-paste" })
     return dir
   end
+
+  it("a plain local session with no native tool gets an OSC 52 copy fallback and one hint", function()
+    local rec = fake_osc52()
+    local msgs = {}
+    local real_notify = vim.notify
+    vim.notify = function(m)
+      msgs[#msgs + 1] = m
+    end
+    require("xyno_clipboard")._reset_notices()
+    vim.env.PATH = H.tmpdir()
+    vim.env.WAYLAND_DISPLAY = "wayland-fake"
+    vim.env.DISPLAY = nil
+    with_fake_proc(plain_chain, function()
+      local c = setup({}, { no_native = true })
+      H.ok(c, "no fallback provider although nothing can reach the clipboard")
+      H.eq({ active = true, reason = "no clipboard tool" }, require("xyno_clipboard").status())
+      c.copy["+"]({ "kept" }, "v")
+      H.eq({ { reg = "+", lines = { "kept" } } }, rec.emitted)
+      H.eq({ { "kept" }, "v" }, c.paste["+"](), "paste returns the last copy instead of querying the terminal")
+      vim.wait(200, function()
+        return #msgs > 0
+      end)
+      vim.notify = real_notify
+      H.eq(1, #msgs)
+      H.match(msgs[1], "wl-clipboard", true)
+    end)
+  end)
+
+  it("never replaces a user's own vim.g.clipboard in a plain session", function()
+    vim.env.PATH = H.tmpdir()
+    vim.env.DISPLAY = nil
+    with_fake_proc(plain_chain, function()
+      vim.g.clipboard = nil
+      for _, k in ipairs({ "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID" }) do
+        vim.env[k] = nil
+      end
+      local mine = { name = "mine", copy = { ["+"] = function() end }, paste = { ["+"] = function() end } }
+      vim.g.clipboard = mine
+      require("xyno_clipboard").setup()
+      H.eq("mine", vim.g.clipboard.name)
+    end)
+  end)
+
+  it("a failing wl-copy is reported once and OSC 52 is still emitted", function()
+    local rec = fake_osc52()
+    local wl = fake_wl()
+    write(wl .. "/wl-copy", "#!/bin/sh\ncat >/dev/null\necho boom >&2\nexit 3\n")
+    vim.env.PATH = wl .. ":" .. saved.PATH
+    vim.env.WAYLAND_DISPLAY = "wayland-fake"
+    local msgs = {}
+    local real_notify = vim.notify
+    vim.notify = function(m)
+      msgs[#msgs + 1] = m
+    end
+    require("xyno_clipboard")._reset_notices()
+    local c = setup({ TMUX = "x" })
+    c.copy["+"]({ "a" })
+    c.copy["+"]({ "b" })
+    vim.notify = real_notify
+    H.eq(2, #rec.emitted)
+    H.eq(1, #msgs, "one notice, not one per yank")
+    H.match(msgs[1], "wl-copy failed (exit 3)", true)
+    H.match(msgs[1], "boom", true)
+  end)
+
+  it("setup() is idempotent: twice in a row keeps the provider, a plain re-run drops our own", function()
+    fake_osc52()
+    local C = require("xyno_clipboard")
+    setup({ TMUX = "x" })
+    local first = vim.g.clipboard
+    C.setup()
+    H.eq("XynoClipboard", vim.g.clipboard.name)
+    H.eq({ active = true, reason = "TMUX" }, C.status())
+    H.ok(first ~= nil)
+    -- the session ended (variable gone) and a native tool exists: our provider must not linger as if it were the user's
+    vim.env.TMUX = nil
+    with_native_tool()
+    with_fake_proc(plain_chain, function()
+      C.setup()
+    end)
+    H.is_nil(vim.g.clipboard)
+    H.eq(false, C.status().active)
+  end)
 
   it("does nothing outside tmux/ssh/herdr when no ancestor is herdr", function()
     with_fake_proc(plain_chain, function()

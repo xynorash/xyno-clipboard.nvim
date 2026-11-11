@@ -48,7 +48,7 @@ None. It works through the normal `"+` and `"*` registers (for example with `vim
 
 ## How it works
 
-The provider is installed only when `$TMUX`, `$SSH_TTY`, `$SSH_CONNECTION` or `$HERDR_PANE_ID` is set, or when an ancestor process (up to 16 levels, read from `/proc`) has a name containing `herdr`. Copy runs `wl-copy --sensitive --type text/plain` first when Wayland tools are present, then emits OSC 52. Paste uses `wl-paste --no-newline` in that case, otherwise an OSC 52 query that tmux or the terminal has to answer. Elsewhere nothing is installed.
+The provider is installed only when `$TMUX`, `$SSH_TTY`, `$SSH_CONNECTION` or `$HERDR_PANE_ID` is set, or when an ancestor process (up to 16 levels, read from `/proc`) has a name containing `herdr`. Copy runs `wl-copy --sensitive --type text/plain` first when Wayland tools are present, then emits OSC 52. Paste uses `wl-paste --no-newline` in that case, otherwise an OSC 52 query that tmux or the terminal has to answer. In a plain local session the provider is also installed when Neovim has nothing to work with (no `wl-copy`+`wl-paste` on Wayland, no `xclip` or `xsel` on X11, none of the other native tools): copy is then OSC 52 only, paste returns the last copy of the session, and a single notice names the missing package. A `vim.g.clipboard` set by the user is never replaced there. A failing `wl-copy` is reported once (the OSC 52 copy still happens). Otherwise nothing is installed.
 
 ## Platforms
 
