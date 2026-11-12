@@ -25,7 +25,8 @@ end
 local C = require("xyno_clipboard")
 
 describe("xyno_clipboard async copy", function()
-  local ENV = { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "DISPLAY", "PATH", "FSC", "FAP" }
+  local ENV =
+    { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "DISPLAY", "PATH", "FSC", "FAP" }
   local saved, real_osc52, real_notify, real_send, msgs, sent, pids
 
   before_each(function()
@@ -112,7 +113,7 @@ describe("xyno_clipboard async copy", function()
   end)
 
   it("quick yanks reach wl-copy in order and paste after a yank sees the last one", function()
-    local dir = fake("sleep 0.15\ncat > %DIR%/clip\necho \"$$\" >> %DIR%/order\n")
+    local dir = fake('sleep 0.15\ncat > %DIR%/clip\necho "$$" >> %DIR%/order\n')
     local c = vim.g.clipboard
     for _, s in ipairs({ "one", "two", "three" }) do
       c.copy["+"]({ s })
@@ -130,7 +131,7 @@ describe("xyno_clipboard async copy", function()
   end)
 
   it("a failing wl-copy does not stop the queue behind it", function()
-    local dir = fake("cat > %DIR%/clip\nif [ \"$(cat %DIR%/clip)\" = bad ]; then echo nope >&2; exit 4; fi\n")
+    local dir = fake('cat > %DIR%/clip\nif [ "$(cat %DIR%/clip)" = bad ]; then echo nope >&2; exit 4; fi\n')
     vim.g.clipboard.copy["+"]({ "bad" })
     vim.g.clipboard.copy["+"]({ "good" })
     H.ok(C.flush(3000))
@@ -197,16 +198,22 @@ describe("xyno_clipboard passthrough framing", function()
 
   it("the tmux 'dropped' re-check does not block the yank", function()
     local dir = H.tmpdir()
-    write(dir .. "/tmux", "#!/bin/sh\nsleep 0.6\ncase \"$1\" in show-options) [ \"$3\" = set-clipboard ] && echo external || exit 1 ;; esac\n")
+    write(
+      dir .. "/tmux",
+      '#!/bin/sh\nsleep 0.6\ncase "$1" in show-options) [ "$3" = set-clipboard ] && echo external || exit 1 ;; esac\n'
+    )
     vim.fn.system({ "chmod", "+x", dir .. "/tmux" })
     vim.env.PATH = dir .. ":" .. saved.PATH
     vim.env.TMUX = "/tmp/fake,1,0"
     vim.env.WAYLAND_DISPLAY, vim.env.DISPLAY = nil, nil
     vim.g.clipboard = nil
     C.setup()
-    H.ok(vim.wait(15000, function()
-      return C.route() == "dropped"
-    end, 20), "tmux facts arrived: dropped")
+    H.ok(
+      vim.wait(15000, function()
+        return C.route() == "dropped"
+      end, 20),
+      "tmux facts arrived: dropped"
+    )
     -- force the re-check window
     C._expire_tmux_check()
     local t = ms()
