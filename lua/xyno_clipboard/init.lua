@@ -19,7 +19,14 @@ local function notify_once(key, msg, level)
     return
   end
   notified[key] = true
-  vim.notify("xyno-clipboard: " .. msg, level or vim.log.levels.WARN)
+  -- one line: a multi-line message in a UI-less nvim ends in a "Press ENTER" prompt that swallows the next
+  -- command (it hung xynovim's headless local-history spec until the notice was joined)
+  vim.notify("xyno-clipboard: " .. msg:gsub("%s*\n%s*", " "), level or vim.log.levels.WARN)
+  if #vim.api.nvim_list_uis() == 0 then
+    -- no UI to show it: the line would stay on the command line and the next message would end in
+    -- "Press ENTER" (it hung xynovim's headless local-history spec). It stays in :messages.
+    pcall(vim.cmd, "echo ''")
+  end
 end
 
 --- True when a native provider Neovim itself would pick is usable. Probed by
