@@ -120,6 +120,15 @@ local function tmux_facts(out)
   return f
 end
 
+-- The questions asked of tmux, shared by the blocking query (:checkhealth) and the async refresh (setup,
+-- FocusGained, the "dropped" re-check) so the two can not drift apart.
+local TMUX_QUERIES = {
+  { "version", { "-V" } },
+  { "set_clipboard", { "show-options", "-gv", "set-clipboard" } },
+  { "allow_passthrough", { "show-options", "-gv", "allow-passthrough" } }, -- tmux >= 3.3
+  { "features", { "display-message", "-p", "#{client_termfeatures}" } }, -- empty without an attached client
+}
+
 local function tmux_cmd(args, timeout)
   local ok, o = pcall(function()
     return vim.system(vim.list_extend({ "tmux" }, args), { text = true }):wait(timeout or 1500)
@@ -129,14 +138,14 @@ local function tmux_cmd(args, timeout)
   end
 end
 
---- Ask the running tmux (nvim's own server, through $TMUX). Blocking: setup() runs it in a job, :checkhealth waits.
+--- Ask the running tmux (nvim's own server, through $TMUX). Blocking: only :checkhealth calls it; copies and
+--- setup() use refresh_tmux(), which never waits.
 --- @return table { version?, set_clipboard?, allow_passthrough?, features? }
 function M.query_tmux()
   local out = {}
-  out.version = tmux_cmd({ "-V" })
-  out.set_clipboard = tmux_cmd({ "show-options", "-gv", "set-clipboard" })
-  out.allow_passthrough = tmux_cmd({ "show-options", "-gv", "allow-passthrough" }) -- tmux >= 3.3
-  out.features = tmux_cmd({ "display-message", "-p", "#{client_termfeatures}" }) -- empty without an attached client
+  for _, q in ipairs(TMUX_QUERIES) do
+    out[q[1]] = tmux_cmd(q[2])
+  end
   return tmux_facts(out)
 end
 
@@ -162,42 +171,180 @@ local function tmux_route()
   return "dropped"
 end
 
+--- Re-ask tmux without blocking; the answer lands in ext.tmux later (the route of the NEXT copy changes).
 local function refresh_tmux()
   if vim.env.TMUX == nil or vim.fn.executable("tmux") ~= 1 then
     ext.tmux = nil
     return
   end
-  local function run(args, key, acc, next_)
-    local ok = pcall(vim.system, vim.list_extend({ "tmux" }, args), { text = true }, function(o)
-      acc[key] = o.code == 0 and vim.trim(o.stdout or "") or nil
-      next_()
+  if ext.tmux_refreshing then
+    return -- one refresh at a time per session: a burst of yanks or focus events must not stack tmux calls
+  end
+  ext.tmux_refreshing = true
+  local acc, mine = {}, ext -- ext is replaced by setup(): a late answer belongs to the old session
+  local function step(i)
+    local q = TMUX_QUERIES[i]
+    if not q then
+      vim.schedule(function()
+        mine.tmux_refreshing = false
+        if ext == mine then
+          ext.tmux = tmux_facts(acc)
+        end
+      end)
+      return
+    end
+    local ok = pcall(vim.system, vim.list_extend({ "tmux" }, q[2]), { text = true, timeout = 1500 }, function(o)
+      acc[q[1]] = o.code == 0 and vim.trim(o.stdout or "") or nil
+      step(i + 1)
     end)
     if not ok then
-      next_()
+      step(i + 1)
     end
   end
-  local acc, mine = {}, ext -- ext is replaced by setup(): a late answer belongs to the old session
-  run({ "show-options", "-gv", "set-clipboard" }, "set_clipboard", acc, function()
-    run({ "show-options", "-gv", "allow-passthrough" }, "allow_passthrough", acc, function()
-      run({ "display-message", "-p", "#{client_termfeatures}" }, "features", acc, function()
-        vim.schedule(function()
-          if ext == mine then
-            ext.tmux = tmux_facts(acc)
-          end
-        end)
-      end)
-    end)
-  end)
+  step(1)
+end
+
+--- Split `seq` into pieces whose ESC-doubled size is at most `n` bytes. The doubling is done per piece, so
+--- an ESC ESC pair is never cut in two (a lone ESC inside a DCS ends the passthrough in tmux).
+local function passthrough_pieces(seq, n)
+  local pieces, i, len = {}, 1, #seq
+  while i <= len do
+    local size, j = 0, i
+    while j <= len do
+      local w = seq:byte(j) == 27 and 2 or 1
+      if size + w > n then
+        break
+      end
+      size, j = size + w, j + 1
+    end
+    pieces[#pieces + 1] = seq:sub(i, j - 1):gsub("\27", "\27\27")
+    i = j
+  end
+  return pieces
 end
 
 --- Write `text` as OSC 52 through a tmux DCS passthrough, in pieces of config.chunk_bytes.
 local function emit_passthrough(register, text)
   local seq = ("\27]52;%s;%s\27\\"):format(register == "+" and "c" or "p", vim.base64.encode(text))
-  seq = seq:gsub("\27", "\27\27")
-  local n = math.max(64, config.chunk_bytes)
-  for i = 1, #seq, n do
-    vim.api.nvim_ui_send("\27Ptmux;" .. seq:sub(i, i + n - 1) .. "\27\\")
+  for _, piece in ipairs(passthrough_pieces(seq, math.max(64, config.chunk_bytes))) do
+    vim.api.nvim_ui_send("\27Ptmux;" .. piece .. "\27\\")
   end
+end
+
+-- ---------------------------------------------------------------- wl-copy (asynchronous, ordered)
+
+-- A copy used to run `wl-copy` with vim.fn.system(): every yank blocked until wl-copy exited AND its stdout
+-- pipe closed, and wl-copy forks a daemon that keeps serving the selection. A stuck compositor froze the
+-- editor. Now each copy is a queued job run one at a time (so two quick yanks arrive in order), with the
+-- text written to stdin, a timeout that kills a hung wl-copy, and one notice per kind of failure.
+local WL_TIMEOUT_MS = 3000
+local WL_QUEUE_MAX = 64
+local wlq = { items = {}, busy = false }
+
+local function wl_run_next()
+  if wlq.busy then
+    return
+  end
+  local job = table.remove(wlq.items, 1)
+  if not job then
+    return
+  end
+  wlq.busy = true
+  local uv = vim.uv
+  local stdin, stderr = uv.new_pipe(false), uv.new_pipe(false)
+  local errbuf, finished, handle, timer = {}, false, nil, uv.new_timer()
+  local timed_out = false
+
+  local function finish(code, signal, spawn_err)
+    if finished then
+      return
+    end
+    finished = true
+    timer:stop()
+    for _, h in ipairs({ timer, stdin, stderr }) do
+      if not h:is_closing() then
+        h:close()
+      end
+    end
+    if handle and not handle:is_closing() then
+      handle:close()
+    end
+    local err = vim.trim(table.concat(errbuf))
+    vim.schedule(function()
+      wlq.busy = false
+      if spawn_err then
+        notify_once("wl-copy", ("wl-copy could not start: %s\nThe yank was not copied to the Wayland clipboard."):format(spawn_err))
+      elseif timed_out then
+        notify_once(
+          "wl-copy",
+          ("wl-copy did not finish within %d ms and was killed.\nThe yank was not copied to the Wayland clipboard."):format(WL_TIMEOUT_MS)
+        )
+      elseif code ~= 0 then
+        notify_once(
+          "wl-copy",
+          ("wl-copy failed (exit %d): %s\nThe yank was not copied to the Wayland clipboard."):format(code, err)
+        )
+      end
+      wl_run_next()
+    end)
+  end
+
+  local spawn_err
+  handle, spawn_err = uv.spawn(job.cmd[1], {
+    args = vim.list_slice(job.cmd, 2),
+    stdio = { stdin, nil, stderr },
+    detached = true, -- the selection-serving daemon must outlive nvim and never share its process group
+  }, function(code, signal)
+    finish(code, signal)
+  end)
+  if not handle then
+    finish(-1, 0, spawn_err or "spawn failed")
+    return
+  end
+  stderr:read_start(function(_, data)
+    if data then
+      errbuf[#errbuf + 1] = data
+    end
+  end)
+  -- the exit callback fires when the process exits, NOT when the daemon it forked closes our pipes
+  timer:start(WL_TIMEOUT_MS, 0, function()
+    if not finished then
+      timed_out = true
+      pcall(handle.kill, handle, "sigkill")
+    end
+  end)
+  stdin:write(job.input, function()
+    if not stdin:is_closing() then
+      stdin:shutdown(function()
+        if not stdin:is_closing() then
+          stdin:close()
+        end
+      end)
+    end
+  end)
+end
+
+local function wl_enqueue(cmd, lines)
+  if #wlq.items >= WL_QUEUE_MAX then
+    table.remove(wlq.items, 1) -- a wedged clipboard must not grow memory without bound: drop the oldest
+  end
+  local input = table.concat(lines, "\n") -- the same bytes vim.fn.system(cmd, lines) wrote
+  wlq.items[#wlq.items + 1] = { cmd = cmd, input = input }
+  wl_run_next()
+end
+
+--- Wait (at most `timeout` ms, default 1500) until every queued wl-copy has finished. Paste calls it so
+--- `"+y` then `"+p` sees the yank; VimLeavePre calls it so a yank right before :q is not lost.
+--- @return boolean idle
+function M.flush(timeout)
+  return vim.wait(timeout or 1500, function()
+    return not wlq.busy and #wlq.items == 0
+  end, 2)
+end
+
+--- True while a wl-copy is queued or running.
+function M.copy_pending()
+  return wlq.busy or #wlq.items > 0
 end
 
 local function status_lines()
@@ -287,16 +434,7 @@ function M.setup(opts)
         if register == "*" then
           cmd[#cmd + 1] = "--primary"
         end
-        local out = vim.fn.system(cmd, lines)
-        if vim.v.shell_error ~= 0 then
-          notify_once(
-            "wl-copy",
-            ("wl-copy failed (exit %d): %s\nThe yank was not copied to the Wayland clipboard."):format(
-              vim.v.shell_error,
-              vim.trim(out or "")
-            )
-          )
-        end
+        wl_enqueue(cmd, lines)
       end
 
       if opts.osc52 and vim.g.xyno_clipboard_osc52 ~= false then
@@ -315,10 +453,10 @@ function M.setup(opts)
         end
         local route = tmux_route()
         if route == "dropped" and os.time() - (ext.tmux_checked or 0) >= 5 then
-          -- tmux.conf may have been changed since setup(): ask again (3 quick tmux calls), at most every 5 s
+          -- tmux.conf may have been changed since setup(): ask again, in the background, at most every 5 s.
+          -- This copy keeps the cached route; the next one sees the new answer.
           ext.tmux_checked = os.time()
-          ext.tmux = M.query_tmux()
-          route = tmux_route()
+          refresh_tmux()
         end
         if route == "passthrough" then
           emit_passthrough(register, text)
@@ -343,6 +481,7 @@ function M.setup(opts)
     end
 
     return function()
+      M.flush() -- a yank still on its way to wl-copy must be what the paste sees
       local cmd = { "wl-paste", "--no-newline" }
       if register == "*" then
         cmd[#cmd + 1] = "--primary"
@@ -363,6 +502,7 @@ function M.setup(opts)
   state.active, state.reason = true, reason
   ext.fallback, ext.has_wayland = fallback, has_wayland
   refresh_tmux()
+  vim.api.nvim_create_autocmd("VimLeavePre", { group = group, callback = function() M.flush(1000) end })
   vim.api.nvim_create_autocmd("FocusGained", { group = group, callback = refresh_tmux }) -- tmux.conf may have been sourced
 
   if fallback then
@@ -466,6 +606,11 @@ function M.route()
 end
 
 --- Forget which one-shot notices were shown (for tests).
+--- Test hook: make the next copy in the "dropped" route start a background tmux re-check.
+function M._expire_tmux_check()
+  ext.tmux_checked = 0
+end
+
 function M._reset_notices()
   notified = {}
 end

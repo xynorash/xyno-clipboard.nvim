@@ -225,6 +225,7 @@ esac
     vim.g.clipboard = nil
     C.setup({ max_bytes = 100 })
     vim.g.clipboard.copy["+"]({ string.rep("z", 500) })
+    H.ok(C.flush(3000))
     H.eq({}, emitted)
     H.eq(string.rep("z", 500), read(dir .. "/stdin"))
   end)
