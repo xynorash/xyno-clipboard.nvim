@@ -21,7 +21,18 @@ end
 local C = require("xyno_clipboard")
 
 describe("xyno_clipboard robustness", function()
-  local ENV = { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "DISPLAY", "PATH", "FSC", "FAP", "FFEAT" }
+  local ENV = {
+    "TMUX",
+    "SSH_TTY",
+    "SSH_CONNECTION",
+    "HERDR_PANE_ID",
+    "WAYLAND_DISPLAY",
+    "DISPLAY",
+    "PATH",
+    "FSC",
+    "FAP",
+    "FFEAT",
+  }
   local saved, real_osc52, real_send, real_notify, sent, msgs, emitted
 
   before_each(function()
@@ -95,9 +106,12 @@ esac
     vim.env.FSC, vim.env.FAP, vim.env.FFEAT = sc, ap, feat
     vim.g.clipboard = nil
     C.setup(opts)
-    H.ok(vim.wait(5000, function()
-      return C.tmux() ~= nil
-    end, 10), "tmux facts arrived")
+    H.ok(
+      vim.wait(5000, function()
+        return C.tmux() ~= nil
+      end, 10),
+      "tmux facts arrived"
+    )
   end
 
   it("invalid options are reported once and ignored, defaults stay", function()
@@ -149,32 +163,38 @@ esac
     H.eq("\27]52;c;" .. vim.base64.encode(text) .. "\27\\", seq)
   end)
 
-  it("tmux that drops OSC 52 (external, no passthrough): hint, statusline, one notice; the copy is still emitted raw", function()
-    in_tmux("external", nil, "")
-    H.eq("dropped", C.route())
-    local h = C.hint()
-    H.eq("tmux-drops", h.kind)
-    H.match(h.fix, "set-clipboard on", true)
-    local text, hl = C.statusline()
-    H.eq({ "clip: tmux drops OSC52", "XynoClipboardError" }, { text, hl })
-    vim.g.clipboard.copy["+"]({ "a" })
-    vim.g.clipboard.copy["+"]({ "b" })
-    H.eq(2, #emitted)
-    H.eq(1, #msgs, "one notice: " .. vim.inspect(msgs))
-    H.match(msgs[1], "tmux ignores OSC 52", true)
-    H.match(msgs[1], "set -g set-clipboard on", true)
-  end)
+  it(
+    "tmux that drops OSC 52 (external, no passthrough): hint, statusline, one notice; the copy is still emitted raw",
+    function()
+      in_tmux("external", nil, "")
+      H.eq("dropped", C.route())
+      local h = C.hint()
+      H.eq("tmux-drops", h.kind)
+      H.match(h.fix, "set-clipboard on", true)
+      local text, hl = C.statusline()
+      H.eq({ "clip: tmux drops OSC52", "XynoClipboardError" }, { text, hl })
+      vim.g.clipboard.copy["+"]({ "a" })
+      vim.g.clipboard.copy["+"]({ "b" })
+      H.eq(2, #emitted)
+      H.eq(1, #msgs, "one notice: " .. vim.inspect(msgs))
+      H.match(msgs[1], "tmux ignores OSC 52", true)
+      H.match(msgs[1], "set -g set-clipboard on", true)
+    end
+  )
 
-  it("tmux = raw forces the raw path even when only passthrough would work; tmux = passthrough forces the wrap", function()
-    in_tmux("external", "on", "", { tmux = "raw" })
-    H.eq("raw", C.route())
-    vim.g.clipboard.copy["+"]({ "a" })
-    H.eq(1, #emitted)
-    in_tmux("on", nil, "", { tmux = "passthrough" })
-    H.eq("passthrough", C.route())
-    vim.g.clipboard.copy["+"]({ "a" })
-    H.eq(1, #sent)
-  end)
+  it(
+    "tmux = raw forces the raw path even when only passthrough would work; tmux = passthrough forces the wrap",
+    function()
+      in_tmux("external", "on", "", { tmux = "raw" })
+      H.eq("raw", C.route())
+      vim.g.clipboard.copy["+"]({ "a" })
+      H.eq(1, #emitted)
+      in_tmux("on", nil, "", { tmux = "passthrough" })
+      H.eq("passthrough", C.route())
+      vim.g.clipboard.copy["+"]({ "a" })
+      H.eq(1, #sent)
+    end
+  )
 
   it("a tmux that does not answer is treated as unknown: raw, no hint", function()
     in_tmux(nil, nil, "")
@@ -294,7 +314,9 @@ describe("xyno_clipboard in real tmux sessions", function()
     write(dir .. "/f.txt", "tui text\n")
     write(
       dir .. "/init.lua",
-      ('vim.opt.rtp:prepend(%q)\nvim.env.WAYLAND_DISPLAY = nil\nvim.env.DISPLAY = nil\nrequire("xyno_clipboard").setup()\n'):format(vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)))))
+      ('vim.opt.rtp:prepend(%q)\nvim.env.WAYLAND_DISPLAY = nil\nvim.env.DISPLAY = nil\nrequire("xyno_clipboard").setup()\n'):format(
+        vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))))
+      )
     )
     return dir
   end
@@ -307,30 +329,53 @@ describe("xyno_clipboard in real tmux sessions", function()
     write(dir .. "/inner.conf", ("set -g set-clipboard %s\nset -g allow-passthrough %s\n"):format(sc, ap))
     H.eq(0, tmux(o, { "new-session", "-d", "-x", "120", "-y", "30", "-s", "o" }).code)
     tmux(o, { "set", "-g", "set-clipboard", "on" })
-    tmux(o, { "send-keys", "-t", "o", ("tmux -L %s -f %s/inner.conf new-session -s i 'nvim -u %s/init.lua -i NONE -n %s/f.txt'"):format(i, dir, dir, dir), "Enter" })
-    H.ok(vim.wait(10000, function()
-      return (tmux(i, { "capture-pane", "-p", "-t", "i" }).stdout or ""):find("tui text", 1, true)
-    end, 100), "nvim is up in the inner tmux")
+    tmux(o, {
+      "send-keys",
+      "-t",
+      "o",
+      ("tmux -L %s -f %s/inner.conf new-session -s i 'nvim -u %s/init.lua -i NONE -n %s/f.txt'"):format(
+        i,
+        dir,
+        dir,
+        dir
+      ),
+      "Enter",
+    })
+    H.ok(
+      vim.wait(10000, function()
+        return (tmux(i, { "capture-pane", "-p", "-t", "i" }).stdout or ""):find("tui text", 1, true)
+      end, 100),
+      "nvim is up in the inner tmux"
+    )
     vim.wait(500)
     tmux(i, { "send-keys", "-t", "i", '"+yy' })
     return o, i
   end
 
-  it("set-clipboard external + allow-passthrough on: the yank reaches the terminal (outer tmux) through the passthrough", function()
-    local dir = sandbox()
-    local o, i = nested(dir, "external", "on")
-    H.ok(vim.wait(6000, function()
-      return tmux(o, { "show-buffer" }).stdout == "tui text\n"
-    end, 100), "the outer terminal got the text")
-    H.eq(1, tmux(i, { "show-buffer" }).code, "no inner tmux buffer: it went around tmux")
-  end)
+  it(
+    "set-clipboard external + allow-passthrough on: the yank reaches the terminal (outer tmux) through the passthrough",
+    function()
+      local dir = sandbox()
+      local o, i = nested(dir, "external", "on")
+      H.ok(
+        vim.wait(6000, function()
+          return tmux(o, { "show-buffer" }).stdout == "tui text\n"
+        end, 100),
+        "the outer terminal got the text"
+      )
+      H.eq(1, tmux(i, { "show-buffer" }).code, "no inner tmux buffer: it went around tmux")
+    end
+  )
 
   it("set-clipboard on: the yank becomes an inner tmux buffer and reaches the terminal", function()
     local dir = sandbox()
     local o, i = nested(dir, "on", "off")
-    H.ok(vim.wait(6000, function()
-      return tmux(o, { "show-buffer" }).stdout == "tui text\n"
-    end, 100), "the outer terminal got the text")
+    H.ok(
+      vim.wait(6000, function()
+        return tmux(o, { "show-buffer" }).stdout == "tui text\n"
+      end, 100),
+      "the outer terminal got the text"
+    )
     H.eq("tui text\n", tmux(i, { "show-buffer" }).stdout)
   end)
 

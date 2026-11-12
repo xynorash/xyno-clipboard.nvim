@@ -94,7 +94,8 @@ local function validate(opts)
     elseif type(v) ~= type(d) then
       problems[#problems + 1] = ("%s: expected %s, got %s"):format(k, type(d), type(v))
     elseif (k == "max_bytes" and (v < 0 or v ~= v)) or (k == "chunk_bytes" and (v < 64 or v > 1000000)) then
-      problems[#problems + 1] = k == "max_bytes" and "max_bytes: must be >= 0" or "chunk_bytes: must be between 64 and 1000000"
+      problems[#problems + 1] = k == "max_bytes" and "max_bytes: must be >= 0"
+        or "chunk_bytes: must be between 64 and 1000000"
     elseif k == "tmux" and not vim.tbl_contains(TMUX_MODES, v) then
       problems[#problems + 1] = 'tmux: must be "auto", "raw" or "passthrough"'
     elseif k == "on_exceed" and v ~= "skip" and v ~= "send" then
@@ -273,11 +274,16 @@ local function wl_run_next()
     vim.schedule(function()
       wlq.busy = false
       if spawn_err then
-        notify_once("wl-copy", ("wl-copy could not start: %s\nThe yank was not copied to the Wayland clipboard."):format(spawn_err))
+        notify_once(
+          "wl-copy",
+          ("wl-copy could not start: %s\nThe yank was not copied to the Wayland clipboard."):format(spawn_err)
+        )
       elseif timed_out then
         notify_once(
           "wl-copy",
-          ("wl-copy did not finish within %d ms and was killed.\nThe yank was not copied to the Wayland clipboard."):format(WL_TIMEOUT_MS)
+          ("wl-copy did not finish within %d ms and was killed.\nThe yank was not copied to the Wayland clipboard."):format(
+            WL_TIMEOUT_MS
+          )
         )
       elseif code ~= 0 then
         notify_once(
@@ -444,7 +450,7 @@ function M.setup(opts)
           ext.skipped_copy = { bytes = b64, time = os.time() }
           notify_once(
             "oversize",
-            ("a yank of %d base64 characters is over max_bytes (%d): not sent as OSC 52 (the Wayland clipboard, if any, got it). Raise max_bytes or set on_exceed = \"send\"."):format(
+            ('a yank of %d base64 characters is over max_bytes (%d): not sent as OSC 52 (the Wayland clipboard, if any, got it). Raise max_bytes or set on_exceed = "send".'):format(
               b64,
               config.max_bytes
             )
@@ -502,7 +508,12 @@ function M.setup(opts)
   state.active, state.reason = true, reason
   ext.fallback, ext.has_wayland = fallback, has_wayland
   refresh_tmux()
-  vim.api.nvim_create_autocmd("VimLeavePre", { group = group, callback = function() M.flush(1000) end })
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = group,
+    callback = function()
+      M.flush(1000)
+    end,
+  })
   vim.api.nvim_create_autocmd("FocusGained", { group = group, callback = refresh_tmux }) -- tmux.conf may have been sourced
 
   if fallback then
@@ -518,7 +529,9 @@ function M.setup(opts)
     vim.schedule(function()
       notify_once(
         "no-wl",
-        "Wayland session but wl-copy/wl-paste are missing, so yanks only travel via OSC 52.\nFix: " .. INSTALL_HINT .. "."
+        "Wayland session but wl-copy/wl-paste are missing, so yanks only travel via OSC 52.\nFix: "
+          .. INSTALL_HINT
+          .. "."
       )
     end)
   end
@@ -534,24 +547,45 @@ function M.hint()
     return nil
   end
   if ext.fallback then
-    return { kind = "no-tool", level = "warn", text = "no clipboard tool: copy goes to the terminal via OSC 52 only, paste returns the last yank", fix = INSTALL_HINT }
+    return {
+      kind = "no-tool",
+      level = "warn",
+      text = "no clipboard tool: copy goes to the terminal via OSC 52 only, paste returns the last yank",
+      fix = INSTALL_HINT,
+    }
   end
   if ext.tmux and tmux_route() == "dropped" then
     return {
       kind = "tmux-drops",
       level = "error",
-      text = ("tmux ignores OSC 52 from applications (set-clipboard is %q, allow-passthrough %q)"):format(ext.tmux.set_clipboard or "?", ext.tmux.allow_passthrough or "off/unknown"),
+      text = ("tmux ignores OSC 52 from applications (set-clipboard is %q, allow-passthrough %q)"):format(
+        ext.tmux.set_clipboard or "?",
+        ext.tmux.allow_passthrough or "off/unknown"
+      ),
       fix = "add `set -g set-clipboard on` (or `set -g allow-passthrough on`) to tmux.conf and reload it",
     }
   end
   if not ext.has_wayland and vim.env.WAYLAND_DISPLAY ~= nil then
-    return { kind = "no-wl", level = "warn", text = "Wayland session without wl-copy/wl-paste: copies only travel via OSC 52", fix = INSTALL_HINT }
+    return {
+      kind = "no-wl",
+      level = "warn",
+      text = "Wayland session without wl-copy/wl-paste: copies only travel via OSC 52",
+      fix = INSTALL_HINT,
+    }
   end
-  if ext.tmux and ext.tmux.features and ext.tmux.features ~= "" and not ext.tmux.features:find("clipboard", 1, true) and tmux_route() == "raw" then
+  if
+    ext.tmux
+    and ext.tmux.features
+    and ext.tmux.features ~= ""
+    and not ext.tmux.features:find("clipboard", 1, true)
+    and tmux_route() == "raw"
+  then
     return {
       kind = "tmux-no-clipboard",
       level = "warn",
-      text = "tmux does not know that your terminal has a clipboard (client features: " .. ext.tmux.features .. "), so it will not forward OSC 52",
+      text = "tmux does not know that your terminal has a clipboard (client features: "
+        .. ext.tmux.features
+        .. "), so it will not forward OSC 52",
       fix = "set -as terminal-features ',<your TERM>:clipboard' in tmux.conf",
     }
   end
@@ -568,7 +602,12 @@ function M.statusline()
   if not h then
     return "", nil
   end
-  local words = { ["no-tool"] = "clip: no tool", ["no-wl"] = "clip: no wl-copy", ["tmux-drops"] = "clip: tmux drops OSC52", ["tmux-no-clipboard"] = "clip: no tmux clipboard" }
+  local words = {
+    ["no-tool"] = "clip: no tool",
+    ["no-wl"] = "clip: no wl-copy",
+    ["tmux-drops"] = "clip: tmux drops OSC52",
+    ["tmux-no-clipboard"] = "clip: no tmux clipboard",
+  }
   return words[h.kind], h.level == "error" and "XynoClipboardError" or "XynoClipboardWarn"
 end
 
@@ -577,7 +616,8 @@ function M.statusline_hl()
   return hl
 end
 
-local HL_LINKS = { XynoClipboardWarn = "DiagnosticWarn", XynoClipboardError = "DiagnosticError", XynoClipboardOk = "DiagnosticOk" }
+local HL_LINKS =
+  { XynoClipboardWarn = "DiagnosticWarn", XynoClipboardError = "DiagnosticError", XynoClipboardOk = "DiagnosticOk" }
 M.highlight_groups = vim.tbl_keys(HL_LINKS)
 function M._define_highlights()
   for g, l in pairs(HL_LINKS) do

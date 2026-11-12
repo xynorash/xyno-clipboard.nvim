@@ -9,7 +9,8 @@ local function write(path, s)
 end
 
 describe("xyno_clipboard", function()
-  local ENV = { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "DISPLAY", "PATH", "XYNO_FAKE_RC" }
+  local ENV =
+    { "TMUX", "SSH_TTY", "SSH_CONNECTION", "HERDR_PANE_ID", "WAYLAND_DISPLAY", "DISPLAY", "PATH", "XYNO_FAKE_RC" }
   local saved
   local real_osc52
 
@@ -77,7 +78,11 @@ describe("xyno_clipboard", function()
     return vim.g.clipboard
   end
 
-  local plain_chain = { [1000] = { ppid = 500, comm = "nvim" }, [500] = { ppid = 400, comm = "bash" }, [400] = { ppid = 1, comm = "init" } }
+  local plain_chain = {
+    [1000] = { ppid = 500, comm = "nvim" },
+    [500] = { ppid = 400, comm = "bash" },
+    [400] = { ppid = 1, comm = "init" },
+  }
 
   before_each(function()
     saved = { g = vim.g.clipboard, flag = vim.g.xyno_clipboard_osc52 }
@@ -421,4 +426,3 @@ describe("xyno_clipboard opts, status and command", function()
     H.match(msg, "XynoClipboard", true)
   end)
 end)
-

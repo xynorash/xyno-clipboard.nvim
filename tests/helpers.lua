@@ -8,7 +8,10 @@ end
 
 function H.eq(expected, actual, msg)
   if not vim.deep_equal(expected, actual) then
-    fail(("%sexpected %s\n  actual   %s"):format(msg and (msg .. ": ") or "", vim.inspect(expected), vim.inspect(actual)), 2)
+    fail(
+      ("%sexpected %s\n  actual   %s"):format(msg and (msg .. ": ") or "", vim.inspect(expected), vim.inspect(actual)),
+      2
+    )
   end
 end
 
