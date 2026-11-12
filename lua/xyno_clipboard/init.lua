@@ -467,8 +467,9 @@ function M.setup(opts)
         if route == "passthrough" then
           emit_passthrough(register, text)
         else
-          if route == "dropped" then
-            notify_once("tmux-drops", M.hint().text .. ". Fix: " .. M.hint().fix)
+          local h = route == "dropped" and M.hint() or nil
+          if h and h.kind == "tmux-drops" then
+            notify_once("tmux-drops", h.text .. ". Fix: " .. h.fix)
           end
           emit(lines)
         end
@@ -537,6 +538,14 @@ function M.setup(opts)
   end
 end
 
+--- Whether a yank reaches the system clipboard without OSC 52: a local Wayland session with wl-copy / wl-paste
+--- (the provider runs wl-copy on every yank). Then OSC 52 is only a bonus, and a tmux that drops it is no
+--- problem worth a permanent warning; over SSH the clipboard that matters is the local one, so it counts
+--- as remote.
+local function local_native()
+  return ext.has_wayland == true and vim.env.SSH_TTY == nil and vim.env.SSH_CONNECTION == nil
+end
+
 --- The most important thing that keeps a copy from working as expected, or nil:
 --- { kind, text, fix, level }. Kinds: "no-tool" (no native clipboard tool, OSC 52 copy only),
 --- "no-wl" (Wayland session without wl-copy/wl-paste), "tmux-drops" (tmux ignores nvim's OSC 52),
@@ -554,7 +563,7 @@ function M.hint()
       fix = INSTALL_HINT,
     }
   end
-  if ext.tmux and tmux_route() == "dropped" then
+  if ext.tmux and not local_native() and tmux_route() == "dropped" then
     return {
       kind = "tmux-drops",
       level = "error",
@@ -575,6 +584,7 @@ function M.hint()
   end
   if
     ext.tmux
+    and not local_native()
     and ext.tmux.features
     and ext.tmux.features ~= ""
     and not ext.tmux.features:find("clipboard", 1, true)

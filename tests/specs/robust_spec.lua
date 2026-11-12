@@ -183,6 +183,33 @@ esac
   )
 
   it(
+    "a local Wayland session with wl-copy: tmux dropping OSC 52 is no permanent warning (wl-copy carries the yank)",
+    function()
+      local dir = H.tmpdir()
+      for _, tool in ipairs({ "wl-copy", "wl-paste" }) do
+        write(dir .. "/" .. tool, "#!/bin/sh\ncat >/dev/null\n")
+        vim.fn.system({ "chmod", "+x", dir .. "/" .. tool })
+      end
+      vim.env.WAYLAND_DISPLAY = "wayland-test"
+      in_tmux("external", nil, "")
+      vim.env.PATH = dir .. ":" .. vim.env.PATH
+      C.setup()
+      vim.wait(2000, function()
+        return C.tmux() ~= nil
+      end, 10)
+      H.eq("dropped", C.route(), "tmux does drop it")
+      H.is_nil(C.hint(), vim.inspect(C.hint()))
+      H.eq("", (C.statusline()))
+      vim.g.clipboard.copy["+"]({ "a" })
+      H.eq(0, #msgs, "and no notice either: " .. vim.inspect(msgs))
+      -- over SSH the OSC 52 path is the one that matters again
+      vim.env.SSH_CONNECTION = "1 2 3 4"
+      H.eq("tmux-drops", C.hint().kind)
+      H.eq("clip: tmux drops OSC52", (C.statusline()))
+    end
+  )
+
+  it(
     "tmux = raw forces the raw path even when only passthrough would work; tmux = passthrough forces the wrap",
     function()
       in_tmux("external", "on", "", { tmux = "raw" })
