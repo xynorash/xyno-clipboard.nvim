@@ -80,7 +80,7 @@ The provider is installed only when `$TMUX`, `$SSH_TTY`, `$SSH_CONNECTION` or `$
 
 ## Platforms
 
-- Linux: covered by the specs in this repository (`nvim -l tests/run.lua`, 41 tests, including three that run real tmux servers; they skip without tmux). The fake `wl-copy` flow is covered by stubs here and by xynovim's `clipboard-e2e` spec.
+- Linux: covered by the specs in this repository (`nvim -l tests/run.lua`, 42 tests, including three that run real tmux servers; they skip without tmux). The fake `wl-copy` flow is covered by stubs here and by xynovim's `clipboard-e2e` spec.
 - Windows and macOS: Linux only by design. `setup()` returns early without installing anything. In xynovim's own CI this module was skipped on both, so nothing about it is demonstrated there.
 
 ## Extracted from xynovim
