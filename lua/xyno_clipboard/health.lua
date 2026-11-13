@@ -95,6 +95,20 @@ function M.check()
         h.warn("tmux did not answer `show-options -gv set-clipboard`: its settings could not be checked")
       elseif route == "raw" then
         h.warn('tmux = "raw" is forced but set-clipboard is ' .. t.set_clipboard .. ": tmux drops the sequence")
+      elseif exe("wl-copy") and exe("wl-paste") and vim.env.WAYLAND_DISPLAY ~= nil then
+        -- the provider also copies through wl-copy (verified: a yank in this tmux reached wl-paste), so
+        -- nothing is lost on this machine; only an ssh session or another host would be
+        h.warn(
+          ("tmux ignores OSC 52 sent by applications (set-clipboard = %s, allow-passthrough = %s): yanks reach the Wayland clipboard here through wl-copy, but not a clipboard on another host (ssh)"):format(
+            t.set_clipboard,
+            t.allow_passthrough or "off"
+          ),
+          {
+            "set -g set-clipboard on        (tmux.conf; tmux creates a paste buffer and forwards)",
+            "or set -g allow-passthrough on  (tmux >= 3.3; sequences go straight to the terminal)",
+            "See https://github.com/tmux/tmux/wiki/Clipboard",
+          }
+        )
       else
         h.error(
           ("tmux ignores OSC 52 sent by applications (set-clipboard = %s, allow-passthrough = %s): yanks never reach any clipboard"):format(
