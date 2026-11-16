@@ -191,9 +191,8 @@ esac
         vim.fn.system({ "chmod", "+x", dir .. "/" .. tool })
       end
       vim.env.WAYLAND_DISPLAY = "wayland-test"
-      in_tmux("external", nil, "")
       vim.env.PATH = dir .. ":" .. vim.env.PATH
-      C.setup()
+      in_tmux("external", nil, "")
       vim.wait(2000, function()
         return C.tmux() ~= nil
       end, 10)
