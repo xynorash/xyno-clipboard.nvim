@@ -30,6 +30,7 @@ describe("xyno_clipboard async copy", function()
   local saved, real_osc52, real_notify, real_send, msgs, sent, pids
 
   before_each(function()
+    vim.wait(50) -- the previous after_each's setup() schedules a notice; let it fire before capturing
     saved = { g = vim.g.clipboard }
     for _, k in ipairs(ENV) do
       saved[k] = vim.env[k]

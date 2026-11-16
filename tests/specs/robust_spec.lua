@@ -191,8 +191,14 @@ esac
         vim.fn.system({ "chmod", "+x", dir .. "/" .. tool })
       end
       vim.env.WAYLAND_DISPLAY = "wayland-test"
+      in_tmux("external", nil, "") -- fake_tmux replaces PATH, so the wl-copy stubs go on afterwards
+      vim.wait(50) -- let the first setup's scheduled notice (no wl-copy yet) fire, then forget it
+      for i = #msgs, 1, -1 do
+        msgs[i] = nil
+      end
+      C._reset_notices()
       vim.env.PATH = dir .. ":" .. vim.env.PATH
-      in_tmux("external", nil, "")
+      C.setup()
       vim.wait(2000, function()
         return C.tmux() ~= nil
       end, 10)
