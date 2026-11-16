@@ -35,8 +35,20 @@ default provider detection stays untouched.
     require("xyno_clipboard").setup({
       commands = true, -- register :XynoClipboardStatus
       osc52 = true,    -- emit OSC 52 on copy
+      tmux = "auto",   -- "auto" | "raw" | "passthrough"
+      max_bytes = 1000000, -- longest base64 payload sent (0 = no limit)
+      on_exceed = "skip",  -- "skip" | "send"
+      chunk_bytes = 4096,  -- piece size of the tmux passthrough
+      hint = true,         -- statusline text
     })
 <
+Inside tmux, Neovim's bare OSC 52 is dropped unless `set-clipboard` is `on`.
+With tmux = "auto" the plugin asks tmux and uses: raw OSC 52 (set-clipboard
+on), else a DCS passthrough (allow-passthrough on or all, tmux 3.3+), else raw
+anyway and warns (|xyno-clipboard-hint|). max_bytes: a copy with a longer
+base64 payload is not sent as OSC 52 (on_exceed "skip", one notice) or is
+sent anyway ("send"). The default is a guess, not a measured terminal limit.
+chunk_bytes splits only the passthrough, one DCS wrapper per piece.
                                                           *g:xyno_clipboard_osc52*
 Setting `vim.g.xyno_clipboard_osc52 = false` at any time stops the OSC 52
 emit of the installed provider (the local Wayland copy still happens). The
@@ -60,6 +72,19 @@ require("xyno_clipboard").setup({opts})                 *xyno_clipboard.setup()*
 
 require("xyno_clipboard").status()                      *xyno_clipboard.status()*
     Returns a table `{ active = bool, reason = string|nil, skipped = string|nil }`.
+
+                                                           *xyno-clipboard-hint*
+require("xyno_clipboard").hint()
+    `{ kind, text, fix, level }` of the most important problem or nil. Kinds:
+    "no-tool", "no-wl", "tmux-drops", "tmux-no-clipboard".
+require("xyno_clipboard").statusline() / .statusline_hl()
+    "" when fine, else e.g. "clip: tmux drops OSC52" and the group
+    XynoClipboardWarn / XynoClipboardError (links to DiagnosticWarn /
+    DiagnosticError; XynoClipboardOk exists too).
+require("xyno_clipboard").route()    "raw", "passthrough" or "dropped"
+require("xyno_clipboard").tmux()     facts last seen, query_tmux() asks now
+require("xyno_clipboard").last_skipped()   { bytes, time } of an oversize yank
+:checkhealth xyno_clipboard          tools, tmux settings, route, fixes
 
 ==============================================================================
 6. Keys                                                      *xyno-clipboard-keys*
